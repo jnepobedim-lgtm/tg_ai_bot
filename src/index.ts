@@ -22,7 +22,7 @@ const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
 const SYSTEM_PROMPT =
   "Ты полезный и дружелюбный ассистент. Отвечай кратко, по делу, на языке пользователя.";
 
-const MAX_HISTORY = 10; // храним последние 10 сообщений (5 пар user/assistant)
+const MAX_HISTORY = 10;
 
 export default {
   async fetch(
@@ -32,7 +32,6 @@ export default {
   ): Promise<Response> {
     const url = new URL(request.url);
 
-    // --- Установка webhook (открыть один раз в браузере) ---
     if (url.pathname === "/set-webhook") {
       const webhookUrl = `${url.origin}/webhook/${env.WEBHOOK_SECRET}`;
       const r = await fetch(
@@ -43,13 +42,6 @@ export default {
       return new Response(await r.text());
     }
 
-    // --- Сброс webhook (для отладки) ---
-    if (url.pathname === "/del-webhook") {
-      const r = await fetch(`${TG_API(env.TELEGRAM_TOKEN)}/deleteWebhook`);
-      return new Response(await r.text());
-    }
-
-    // --- Приём апдейтов от Telegram ---
     if (
       url.pathname === `/webhook/${env.WEBHOOK_SECRET}` &&
       request.method === "POST"
@@ -62,8 +54,6 @@ export default {
       }
 
       if (update.message?.text && update.message.chat) {
-        // Отвечаем Telegram сразу (важно: < 1 сек),
-        // а обработку делаем в фоне через waitUntil
         ctx.waitUntil(handleMessage(update, env).catch(console.error));
       }
       return new Response("ok");
@@ -80,12 +70,11 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
   const chatId = msg.chat.id;
   const text = msg.text!.trim();
 
-  // --- Команды ---
   if (text === "/start" || text === "/help") {
     await sendMessage(
       env,
       chatId,
-      "Привет! Я ИИ-бот. Напиши сообщение — отвечу.\n\n" +
+      "Привет! Я ИИ-бот (работаю на OpenRouter). Напиши сообщение — отвечу.\n\n" +
         "Команды:\n" +
         "/start — начать\n" +
         "/reset — очистить историю диалога"
@@ -99,10 +88,8 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
     return;
   }
 
-  // Индикатор "печатает…"
   await sendChatAction(env, chatId, "typing");
 
-  // --- История диалога ---
   const historyKey = `chat:${chatId}`;
   let history: ChatMessage[] = [];
   if (env.CHAT_HISTORY) {
@@ -122,17 +109,19 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
     { role: "user", content: text },
   ];
 
-  // --- Запрос к OpenAI ---
   let answer = "";
   try {
+    // --- ЗАПРОС К OPENROUTER ---
     const aiResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${env.OPENAI_KEY}`,
+        "HTTP-Referer": "https://github.com", // Обязательно для OpenRouter
+        "X-Title": "TG Bot",
       },
       body: JSON.stringify({
-        model: "meta-llama/llama-3-8b-instruct:free",
+        model: "meta-llama/llama-3.1-8b-instruct:free", // Бесплатная модель
         messages,
         temperature: 0.7,
         max_tokens: 800,
@@ -140,37 +129,35 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
     });
 
     if (!aiResp.ok) {
-  const errText = await aiResp.text();
-  console.error("OpenAI error:", aiResp.status, errText);
-  await sendMessage(env, chatId, `⚠️ Ошибка API (${aiResp.status}): ${errText.slice(0, 200)}`);
-  return;
+      const errText = await aiResp.text();
+      console.error("OpenRouter error:", aiResp.status, errText);
+      await sendMessage(env, chatId, `⚠️ Ошибка API (${aiResp.status}): ${errText.slice(0, 200)}`);
+      return;
     }
+
     const data = (await aiResp.json()) as {
       choices: { message: { content: string } }[];
     };
     answer = data.choices?.[0]?.message?.content?.trim() || "…";
   } catch (e) {
-    console.error("OpenAI fetch failed:", e);
+    console.error("OpenRouter fetch failed:", e);
     await sendMessage(env, chatId, "⚠️ Не удалось связаться с ИИ.");
     return;
   }
 
-  // --- Отправка ответа ---
   await sendMessage(env, chatId, answer);
 
-  // --- Сохранение истории ---
   if (env.CHAT_HISTORY) {
     history.push({ role: "user", content: text });
     history.push({ role: "assistant", content: answer });
     if (history.length > MAX_HISTORY) history = history.slice(-MAX_HISTORY);
     await env.CHAT_HISTORY.put(historyKey, JSON.stringify(history), {
-      expirationTtl: 60 * 60 * 24 * 7, // 7 дней
+      expirationTtl: 60 * 60 * 24 * 7,
     });
   }
 }
 
 async function sendMessage(env: Env, chatId: number, text: string) {
-  // Telegram лимит: 4096 символов на сообщение — режем, если длиннее
   const MAX_LEN = 4000;
   const chunk = text.length > MAX_LEN ? text.slice(0, MAX_LEN) + "…" : text;
 
@@ -186,7 +173,6 @@ async function sendMessage(env: Env, chatId: number, text: string) {
   });
 
   if (!resp.ok) {
-    // Если HTML сломался — пробуем без parse_mode
     console.error("sendMessage failed:", await resp.text());
     await fetch(`${TG_API(env.TELEGRAM_TOKEN)}/sendMessage`, {
       method: "POST",
@@ -202,4 +188,4 @@ async function sendChatAction(env: Env, chatId: number, action: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ chat_id: chatId, action }),
   });
-    }
+        }
