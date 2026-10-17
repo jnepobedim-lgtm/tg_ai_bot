@@ -1,5 +1,6 @@
 name = "tg-ai-bot"
 main = "src/index.ts"
 compatibility_date = "2024-09-09"
-
+[ai]
+binding = "AI"
 # Замени id после: npx wrangler kv:namespace create CHAT_HISTORY
