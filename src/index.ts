@@ -140,11 +140,11 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
     });
 
     if (!aiResp.ok) {
-      console.error("OpenAI error:", aiResp.status, await aiResp.text());
-      await sendMessage(env, chatId, "⚠️ Ошибка ИИ. Попробуй позже.");
-      return;
+  const errText = await aiResp.text();
+  console.error("OpenAI error:", aiResp.status, errText);
+  await sendMessage(env, chatId, `⚠️ Ошибка API (${aiResp.status}): ${errText.slice(0, 200)}`);
+  return;
     }
-
     const data = (await aiResp.json()) as {
       choices: { message: { content: string } }[];
     };
