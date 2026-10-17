@@ -121,7 +121,7 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
         "X-Title": "TG Bot",
       },
       body: JSON.stringify({
-        model: "mistralai/mistral-7b-instruct:free", // Бесплатная модель
+        model: "google/gemma-2-9b-it:free", // Бесплатная модель
         messages,
         temperature: 0.7,
         max_tokens: 800,
