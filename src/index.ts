@@ -125,14 +125,14 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
   // --- Запрос к OpenAI ---
   let answer = "";
   try {
-    const aiResp = await fetch("https://api.deepseek.com/chat/completions", {
+    const aiResp = await fetch("https://openrouter.ai/api/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${env.OPENAI_KEY}`,
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: "meta-llama/llama-3-8b-instruct:free",
         messages,
         temperature: 0.7,
         max_tokens: 800,
