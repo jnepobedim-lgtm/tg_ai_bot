@@ -74,7 +74,7 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
         Authorization: `Bearer ${env.OPENAI_KEY}`,
       },
       body: JSON.stringify({
-        model: "google/gemma-4-26b-a4b-it:free",
+        model: "dots-studio/dots-3-note-preview:free",
         messages: [
           { role: "system", content: "Ты полезный и дружелюбный ассистент. Отвечай на языке пользователя." },
           { role: "user", content: text }
