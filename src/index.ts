@@ -2,6 +2,7 @@ export interface Env {
   TELEGRAM_TOKEN: string;
   OPENAI_KEY: string; // Ключ от Zveno
   WEBHOOK_SECRET: string;
+  CHAT_HISTORY?: KVNamespace; // Наша база данных
 }
 
 type TelegramUpdate = {
@@ -20,13 +21,10 @@ type TelegramUpdate = {
 
 const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
 
-// Модели
-const MODEL_CHAT = "dots-studio/dots-3-note-preview:free";
-const MODEL_CODE = "nvidia/nemotron-3-super-120b-a12b:f";
-
-// Хранилище выбора пользователя (в памяти воркера)
-// (Для простоты используем Map, но учти: при перезапуске воркера выбор сбросится на "Общение")
-const userModes = new Map<number, "chat" | "code">();
+// Дефолтные модели
+const DEFAULT_CHAT = "dots-studio/dots-3-note-preview:free";
+// Вместо упавшей Poolside используем надежную бесплатную модель от Meta (Llama 3 8B)
+const DEFAULT_CODE = "meta-llama/llama-3-8b-instruct:free"; 
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -49,22 +47,22 @@ export default {
 };
 
 async function handleUpdate(update: TelegramUpdate, env: Env) {
-  // --- Обработка нажатий на кнопки ---
+  // --- Обработка кнопок ---
   if (update.callback_query) {
     const chatId = update.callback_query.message.chat.id;
     const data = update.callback_query.data;
 
     if (data === "mode_chat") {
-      userModes.set(chatId, "chat");
+      await env.CHAT_HISTORY?.put(`mode:${chatId}`, "chat");
       await sendMessage(env, chatId, "Режим переключен: <b>💬 Общение</b>\nМодель: Dots 3");
     } else if (data === "mode_code") {
-      userModes.set(chatId, "code");
-      await sendMessage(env, chatId, "Режим переключен: <b>💻 Кодинг</b>\nМодель: Poolside Laguna");
+      await env.CHAT_HISTORY?.put(`mode:${chatId}`, "code");
+      await sendMessage(env, chatId, "Режим переключен: <b>💻 Кодинг</b>\nМодель: Llama 3 8B");
     }
     return;
   }
 
-  // --- Обработка текстовых сообщений ---
+  // --- Обработка текста ---
   const msg = update.message;
   if (!msg || !msg.text) return;
 
@@ -93,9 +91,9 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
     return;
   }
 
-  // Определяем текущий режим (по умолчанию "chat")
-  const mode = userModes.get(chatId) || "chat";
-  const modelToUse = mode === "code" ? MODEL_CODE : MODEL_CHAT;
+  // Получаем режим из базы (если нет — ставим "chat")
+  let mode = await env.CHAT_HISTORY?.get(`mode:${chatId}`) || "chat";
+  const modelToUse = mode === "code" ? DEFAULT_CODE : DEFAULT_CHAT;
 
   await sendChatAction(env, chatId, "typing");
 
@@ -112,8 +110,8 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
           { 
             role: "system", 
             content: mode === "code" 
-              ? "Ты опытный программист. Отвечай кодом с комментариями, объясняй ошибки. Пиши на языке пользователя." 
-              : "Ты полезный и дружелюбный ассистент. Отвечай кратко и по делу." 
+              ? "Ты опытный программист. Отвечай кодом с комментариями, объясняй ошибки." 
+              : "Ты полезный и дружелюбный ассистент. Отвечай кратко." 
           },
           { role: "user", content: text }
         ],
@@ -124,7 +122,12 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
     if (!aiResp.ok) {
       const errText = await aiResp.text();
       console.error("Zveno error:", aiResp.status, errText);
-      await sendMessage(env, chatId, `⚠️ Ошибка API (${aiResp.status}): ${errText.slice(0, 100)}`);
+      // Если модель перегружена, просто подскажем пользователю
+      if (aiResp.status === 429) {
+         await sendMessage(env, chatId, `⏳ Модель перегружена. Подожди 5-10 секунд и отправь сообщение снова!`);
+      } else {
+         await sendMessage(env, chatId, `⚠️ Ошибка API (${aiResp.status}): ${errText.slice(0, 100)}`);
+      }
       return;
     }
 
