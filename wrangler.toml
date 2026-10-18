@@ -3,4 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2024-09-09"
 [ai]
 binding = "AI"
+[[kv_namespaces]]
+binding = "CHAT_HISTORY"
+id = "720b260e99684d5bb32ace2c2342ef8e"
 # Замени id после: npx wrangler kv:namespace create CHAT_HISTORY
