@@ -1,8 +1,8 @@
 export interface Env {
   TELEGRAM_TOKEN: string;
-  OPENAI_KEY: string; // Ключ от Zveno
+  OPENAI_KEY: string; 
   WEBHOOK_SECRET: string;
-  CHAT_HISTORY?: KVNamespace; // Наша база данных
+  CHAT_HISTORY?: KVNamespace; 
 }
 
 type TelegramUpdate = {
@@ -21,10 +21,8 @@ type TelegramUpdate = {
 
 const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
 
-// Дефолтные модели
-const DEFAULT_CHAT = "dots-studio/dots-3-note-preview:free";
-// Вместо упавшей Poolside используем надежную бесплатную модель от Meta (Llama 3 8B)
-const DEFAULT_CODE = "dots-studio/dots-3-note-preview:free";
+// Используем одну и ту же рабочую модель для всего, чтобы не было 404
+const WORKING_MODEL = "dots-studio/dots-3-note-preview:free"; 
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -37,8 +35,12 @@ export default {
     }
 
     if (url.pathname === `/webhook/${env.WEBHOOK_SECRET}` && request.method === "POST") {
-      const update = (await request.json()) as TelegramUpdate;
-      ctx.waitUntil(handleUpdate(update, env).catch(console.error));
+      try {
+        const update = (await request.json()) as TelegramUpdate;
+        ctx.waitUntil(handleUpdate(update, env).catch(console.error));
+      } catch (e) {
+        console.error("Webhook error:", e);
+      }
       return new Response("ok");
     }
 
@@ -52,13 +54,17 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
     const chatId = update.callback_query.message.chat.id;
     const data = update.callback_query.data;
 
-    if (data === "mode_chat") {
-      await env.CHAT_HISTORY?.put(`mode:${chatId}`, "chat");
-      await sendMessage(env, chatId, "Режим переключен: <b>💬 Общение</b>\nМодель: Dots 3");
-    } else if (data === "mode_code") {
-      await env.CHAT_HISTORY?.put(`mode:${chatId}`, "code");
-      await sendMessage(env, chatId, "Режим переключен: <b>💻 Кодинг</b>\nМодель: Llama 3 8B");
+    try {
+      if (env.CHAT_HISTORY) {
+        if (data === "mode_chat") await env.CHAT_HISTORY.put(`mode:${chatId}`, "chat");
+        if (data === "mode_code") await env.CHAT_HISTORY.put(`mode:${chatId}`, "code");
+      }
+    } catch (e) {
+      console.error("KV put error:", e);
     }
+
+    if (data === "mode_chat") await sendMessage(env, chatId, "Режим: <b>💬 Общение</b>");
+    if (data === "mode_code") await sendMessage(env, chatId, "Режим: <b>💻 Кодинг</b>");
     return;
   }
 
@@ -84,7 +90,7 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         chat_id: chatId,
-        text: "Привет! Выбери режим, в котором я буду отвечать:",
+        text: "Привет! Выбери режим:",
         reply_markup: keyboard
       }),
     });
@@ -92,8 +98,14 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
   }
 
   // Получаем режим из базы (если нет — ставим "chat")
-  let mode = await env.CHAT_HISTORY?.get(`mode:${chatId}`) || "chat";
-  const modelToUse = mode === "code" ? DEFAULT_CODE : DEFAULT_CHAT;
+  let mode = "chat";
+  try {
+    if (env.CHAT_HISTORY) {
+      mode = (await env.CHAT_HISTORY.get(`mode:${chatId}`)) || "chat";
+    }
+  } catch (e) {
+    console.error("KV get error:", e);
+  }
 
   await sendChatAction(env, chatId, "typing");
 
@@ -105,29 +117,22 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
         Authorization: `Bearer ${env.OPENAI_KEY}`,
       },
       body: JSON.stringify({
-        model: modelToUse,
+        model: WORKING_MODEL,
         messages: [
           { 
             role: "system", 
             content: mode === "code" 
-              ? "Ты опытный программист. Отвечай кодом с комментариями, объясняй ошибки." 
-              : "Ты полезный и дружелюбный ассистент. Отвечай кратко." 
+              ? "Ты senior-разработчик. Пиши чистый код, объясняй шаги." 
+              : "Ты дружелюбный ассистент." 
           },
           { role: "user", content: text }
         ],
-        temperature: 0.7,
       }),
     });
 
     if (!aiResp.ok) {
       const errText = await aiResp.text();
-      console.error("Zveno error:", aiResp.status, errText);
-      // Если модель перегружена, просто подскажем пользователю
-      if (aiResp.status === 429) {
-         await sendMessage(env, chatId, `⏳ Модель перегружена. Подожди 5-10 секунд и отправь сообщение снова!`);
-      } else {
-         await sendMessage(env, chatId, `⚠️ Ошибка API (${aiResp.status}): ${errText.slice(0, 100)}`);
-      }
+      await sendMessage(env, chatId, `⚠️ Ошибка API (${aiResp.status}): ${errText.slice(0, 100)}`);
       return;
     }
 
@@ -136,8 +141,8 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
     await sendMessage(env, chatId, answer);
 
   } catch (e) {
-    console.error("Zveno fetch failed:", e);
-    await sendMessage(env, chatId, "⚠️ Ошибка соединения с ИИ.");
+    console.error("fetch error:", e);
+    await sendMessage(env, chatId, "⚠️ Ошибка соединения.");
   }
 }
 
