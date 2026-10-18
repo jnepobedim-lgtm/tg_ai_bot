@@ -1,8 +1,7 @@
 export interface Env {
   TELEGRAM_TOKEN: string;
-  OPENAI_KEY: string; 
+  OPENAI_KEY: string; // Ключ от Zveno
   WEBHOOK_SECRET: string;
-  CHAT_HISTORY?: KVNamespace; 
 }
 
 type TelegramUpdate = {
@@ -12,17 +11,12 @@ type TelegramUpdate = {
     chat: { id: number; type: string };
     text?: string;
   };
-  callback_query?: {
-    id: string;
-    message: { message_id: number; chat: { id: number } };
-    data: string;
-  };
 };
 
 const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
 
-// Используем одну и ту же рабочую модель для всего, чтобы не было 404
-const WORKING_MODEL = "dots-studio/dots-3-note-preview:free"; 
+// Единственная рабочая модель
+const MODEL = "dots-studio/dots-3-note-preview:free";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -37,7 +31,7 @@ export default {
     if (url.pathname === `/webhook/${env.WEBHOOK_SECRET}` && request.method === "POST") {
       try {
         const update = (await request.json()) as TelegramUpdate;
-        ctx.waitUntil(handleUpdate(update, env).catch(console.error));
+        ctx.waitUntil(handleMessage(update, env).catch(console.error));
       } catch (e) {
         console.error("Webhook error:", e);
       }
@@ -48,63 +42,16 @@ export default {
   },
 };
 
-async function handleUpdate(update: TelegramUpdate, env: Env) {
-  // --- Обработка кнопок ---
-  if (update.callback_query) {
-    const chatId = update.callback_query.message.chat.id;
-    const data = update.callback_query.data;
-
-    try {
-      if (env.CHAT_HISTORY) {
-        if (data === "mode_chat") await env.CHAT_HISTORY.put(`mode:${chatId}`, "chat");
-        if (data === "mode_code") await env.CHAT_HISTORY.put(`mode:${chatId}`, "code");
-      }
-    } catch (e) {
-      console.error("KV put error:", e);
-    }
-
-    if (data === "mode_chat") await sendMessage(env, chatId, "Режим: <b>💬 Общение</b>");
-    if (data === "mode_code") await sendMessage(env, chatId, "Режим: <b>💻 Кодинг</b>");
-    return;
-  }
-
-  // --- Обработка текста ---
+async function handleMessage(update: TelegramUpdate, env: Env) {
   const msg = update.message;
   if (!msg || !msg.text) return;
 
   const chatId = msg.chat.id;
   const text = msg.text.trim();
 
-  if (text === "/start" || text === "/help" || text === "/menu") {
-    const keyboard = {
-      inline_keyboard: [
-        [
-          { text: "💬 Общение", callback_data: "mode_chat" },
-          { text: "💻 Кодинг", callback_data: "mode_code" }
-        ]
-      ]
-    };
-
-    await fetch(`${TG_API(env.TELEGRAM_TOKEN)}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: "Привет! Выбери режим:",
-        reply_markup: keyboard
-      }),
-    });
+  if (text === "/start" || text === "/help") {
+    await sendMessage(env, chatId, "Привет! Я твой ИИ-ассистент. Пиши любой вопрос (или проси написать код).");
     return;
-  }
-
-  // Получаем режим из базы (если нет — ставим "chat")
-  let mode = "chat";
-  try {
-    if (env.CHAT_HISTORY) {
-      mode = (await env.CHAT_HISTORY.get(`mode:${chatId}`)) || "chat";
-    }
-  } catch (e) {
-    console.error("KV get error:", e);
   }
 
   await sendChatAction(env, chatId, "typing");
@@ -117,14 +64,9 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
         Authorization: `Bearer ${env.OPENAI_KEY}`,
       },
       body: JSON.stringify({
-        model: WORKING_MODEL,
+        model: MODEL,
         messages: [
-          { 
-            role: "system", 
-            content: mode === "code" 
-              ? "Ты senior-разработчик. Пиши чистый код, объясняй шаги." 
-              : "Ты дружелюбный ассистент." 
-          },
+          { role: "system", content: "Ты полезный и умный ассистент. Отвечай на языке пользователя." },
           { role: "user", content: text }
         ],
       }),
@@ -142,7 +84,7 @@ async function handleUpdate(update: TelegramUpdate, env: Env) {
 
   } catch (e) {
     console.error("fetch error:", e);
-    await sendMessage(env, chatId, "⚠️ Ошибка соединения.");
+    await sendMessage(env, chatId, "⚠️ Ошибка соединения с сервером.");
   }
 }
 
