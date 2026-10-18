@@ -1,7 +1,7 @@
 export interface Env {
   TELEGRAM_TOKEN: string;
+  OPENAI_KEY: string; // Сюда мы положили ключ от Zveno
   WEBHOOK_SECRET: string;
-  AI: any; // Встроенная нейросеть Cloudflare
 }
 
 type TelegramUpdate = {
@@ -59,27 +59,44 @@ async function handleMessage(update: TelegramUpdate, env: Env) {
   const text = msg.text!.trim();
 
   if (text === "/start" || text === "/help") {
-    await sendMessage(env, chatId, "Привет! Я работаю на бесплатной нейросети Cloudflare. Напиши сообщение!");
+    await sendMessage(env, chatId, "Привет! Я работаю на нейросети Zveno. Напиши сообщение!");
     return;
   }
 
   await sendChatAction(env, chatId, "typing");
 
   try {
-    // Запрос к встроенной нейросети Cloudflare (модель Llama 3.1 8B)
-    const aiResp = await env.AI.run("@cf/meta/llama-3.1-8b-instruct", {
-      messages: [
-        { role: "system", content: "Ты полезный и дружелюбный ассистент. Отвечай на языке пользователя." },
-        { role: "user", content: text }
-      ]
+    // Запрос к Zveno API
+    const aiResp = await fetch("https://api.zveno.ai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${env.OPENAI_KEY}`,
+      },
+      body: JSON.stringify({
+        model: "dots-studio/dots-3-note-preview:free",
+        messages: [
+          { role: "system", content: "Ты полезный и дружелюбный ассистент. Отвечай на языке пользователя." },
+          { role: "user", content: text }
+        ],
+        temperature: 0.7,
+      }),
     });
 
-    const answer = aiResp.response || "Не удалось получить ответ.";
+    if (!aiResp.ok) {
+      const errText = await aiResp.text();
+      console.error("Zveno error:", aiResp.status, errText);
+      await sendMessage(env, chatId, `⚠️ Ошибка API (${aiResp.status}): ${errText.slice(0, 100)}`);
+      return;
+    }
+
+    const data = (await aiResp.json()) as any;
+    const answer = data.choices?.[0]?.message?.content?.trim() || "Пустой ответ.";
     await sendMessage(env, chatId, answer);
 
   } catch (e) {
-    console.error("Cloudflare AI error:", e);
-    await sendMessage(env, chatId, "⚠️ Ошибка нейросети Cloudflare.");
+    console.error("Zveno fetch failed:", e);
+    await sendMessage(env, chatId, "⚠️ Не удалось связаться с Zveno.");
   }
 }
 
