@@ -22,7 +22,7 @@ const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
 
 // Модели
 const MODEL_CHAT = "dots-studio/dots-3-note-preview:free";
-const MODEL_CODE = "poolside/laguna-xs-2.1:free";
+const MODEL_CODE = "nvidia/nemotron-3-super-120b-a12b:f";
 
 // Хранилище выбора пользователя (в памяти воркера)
 // (Для простоты используем Map, но учти: при перезапуске воркера выбор сбросится на "Общение")
