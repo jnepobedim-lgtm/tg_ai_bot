@@ -24,7 +24,7 @@ const TG_API = (token: string) => `https://api.telegram.org/bot${token}`;
 // Дефолтные модели
 const DEFAULT_CHAT = "dots-studio/dots-3-note-preview:free";
 // Вместо упавшей Poolside используем надежную бесплатную модель от Meta (Llama 3 8B)
-const DEFAULT_CODE = "meta-llama/llama-3-8b-instruct:free"; 
+const DEFAULT_CODE = "dots-studio/dots-3-note-preview:free";
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
